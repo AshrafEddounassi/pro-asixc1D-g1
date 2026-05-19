@@ -9,7 +9,7 @@
     instance_type: "t3.small"
     key_name: "vockey"
     security_group: "db-security-group"
-    elastic_ip: "13.216.34.192"
+    elastic_ip: "44.198.194.136"
   tasks:
     - name: Crear Grup de Seguretat per a SSH i MariaDB
       amazon.aws.ec2_security_group:
