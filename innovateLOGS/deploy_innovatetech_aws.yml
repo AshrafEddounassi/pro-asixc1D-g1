@@ -1,0 +1,220 @@
+---
+# FASE 1: Provisionamiento AWS
+- name: Desplegar infraestructura a AWS Academy
+  hosts: localhost
+  gather_facts: false
+  vars:
+    aws_region: "us-east-1"
+    ami_id: "ami-080e1f13689e07408"
+    instance_type: "t3.large"
+    key_name: "vockey"
+    security_group: "elastic-security-group"
+    elastic_ip: "23.21.142.115"
+  tasks:
+    - name: Crear Grup de Seguretat per a SSH, Elasticsearch i Kibana
+      amazon.aws.ec2_security_group:
+        name: "{{ security_group }}"
+        description: "Permetre ports SSH, Elasticsearch i Kibana"
+        region: "{{ aws_region }}"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 9200
+            to_port: 9200
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 5601
+            to_port: 5601
+            cidr_ip: 0.0.0.0/0
+
+    - name: Crear la instància EC2
+      amazon.aws.ec2_instance:
+        name: "InnovateTech-Logs-Server"
+        key_name: "{{ key_name }}"
+        instance_type: "{{ instance_type }}"
+        image_id: "{{ ami_id }}"
+        region: "{{ aws_region }}"
+        security_group: "{{ security_group }}"
+        wait: true                               
+        wait_timeout: 300
+        volumes:
+          - device_name: /dev/sda1
+            ebs:
+              volume_size: 50
+              volume_type: gp3
+              delete_on_termination: true
+      register: ec2
+
+    - name: Forçar espera addicional perquè la instància passi de pending a running
+      amazon.aws.ec2_instance_info:
+        region: "{{ aws_region }}"
+        instance_ids: "{{ ec2.instances[0].instance_id }}"
+      register: ec2_status
+      until: ec2_status.instances[0].state.name == "running"
+      retries: 10
+      delay: 5
+
+    - name: Associar la IP Elàstica 
+      amazon.aws.ec2_eip:
+        region: "{{ aws_region }}"
+        public_ip: "{{ elastic_ip }}"
+        device_id: "{{ ec2.instances[0].instance_id }}"
+      when: ec2.instances is defined and (ec2.instances | length > 0)
+
+    - name: Esperar connexió SSH al port 22
+      wait_for:
+        host: "{{ elastic_ip }}"
+        port: 22
+        state: started
+        delay: 15
+        timeout: 300
+
+# FASE 2: Configuració de l'usuari OS (connectant com a ubuntu)
+- name: Configuració de l'usuari OS (connectant com a ubuntu)
+  hosts: logs_servers
+  become: true
+  remote_user: ubuntu
+  tasks:
+    - name: Crear usuari 'innovateadmin'
+      ansible.builtin.user:
+        name: innovateadmin
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+
+    - name: Crear directori .ssh per a innovateadmin 
+      ansible.builtin.file:
+        path: /home/innovateadmin/.ssh
+        state: directory
+        owner: innovateadmin
+        group: innovateadmin
+        mode: '0700'
+
+    - name: Copiar claus SSH de ubuntu a innovateadmin
+      ansible.builtin.copy:
+        src: /home/ubuntu/.ssh/authorized_keys
+        dest: /home/innovateadmin/.ssh/authorized_keys
+        remote_src: true
+        owner: innovateadmin
+        group: innovateadmin
+        mode: '0600'
+
+    - name: Permetre sudo sense contrasenya per a innovateadmin
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers.d/innovateadmin
+        line: "innovateadmin ALL=(ALL) NOPASSWD:ALL"
+        create: true
+        mode: '0440'
+
+# FASE 3: Instal·lació i configuració d'Elasticsearch i Kibana (com a innovateadmin)
+- name: Instal·lar i configurar l'entorn Elastic
+  hosts: logs_servers
+  become: true
+  remote_user: innovateadmin
+  tasks:
+    - name: Instal·lar dependències necessàries
+      apt:
+        name: [ 'apt-transport-https', 'gnupg', 'curl' ]
+        state: present
+        update_cache: yes
+
+    - name: Descarregar i afegir la clau GPG de Elastic
+      apt_key:
+        url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        state: present
+
+    - name: Afegir el repositori oficial de Elastic (v8.x)
+      apt_repository:
+        repo: "deb https://artifacts.elastic.co/packages/8.x/apt stable main"
+        state: present
+        filename: elastic-8.x
+
+    - name: Instal·lar Elasticsearch i Kibana
+      apt:
+        name: [ 'elasticsearch', 'kibana' ]
+        state: present
+        update_cache: yes
+
+    # --- CONFIGURACIÓ NETEJA D'ELASTICSEARCH ---
+    - name: Reescriure elasticsearch.yml net i configurat correctament
+      copy:
+        dest: /etc/elasticsearch/elasticsearch.yml
+        owner: root
+        group: elasticsearch
+        mode: '0660'
+        content: |
+          cluster.name: innovate-cluster
+          node.name: node-1
+          path.data: /var/lib/elasticsearch
+          path.logs: /var/log/elasticsearch
+          network.host: 0.0.0.0
+          discovery.type: single-node
+          xpack.security.enabled: true
+          xpack.security.enrollment.enabled: false
+          xpack.security.http.ssl.enabled: false
+          xpack.security.transport.ssl.enabled: false
+
+    - name: Assegurar que Elasticsearch està engegat amb la nova configuració
+      systemd:
+        name: elasticsearch
+        state: restarted
+        enabled: yes
+
+    - name: Esperar que Elasticsearch estigui operatiu
+      uri:
+        url: http://localhost:9200
+        status_code: [200, 401]
+      register: elastic_health
+      until: elastic_health.status == 200 or elastic_health.status == 401
+      retries: 30
+      delay: 5
+
+    # --- GENERACIÓ DE CREDENCIALS ---
+    - name: Generar nova contrasenya per a l'usuari mestre 'elastic'
+      command: /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -b
+      register: elastic_password_output
+
+    - name: Generar contrasenya interna per a 'kibana_system' (només per al backend)
+      shell: /usr/share/elasticsearch/bin/elasticsearch-reset-password -u kibana_system -b | grep 'New value:' | awk '{print $3}'
+      register: kibana_internal_password
+
+    - name: Emmagatzemar les credencials per fer l'inici de sessió web
+      copy:
+        content: |
+          ==================================================
+                 CREDENCIALS D'ACCÉS A KIBANA (WEB)
+          ==================================================
+          URL: http://23.21.142.115:5601
+          Usuari: elastic
+
+          Resultat de la generació de contrasenya:
+          {{ elastic_password_output.stdout }}
+          ==================================================
+        dest: /home/innovateadmin/elastic_credentials.txt
+        owner: innovateadmin
+        group: innovateadmin
+        mode: '0600'
+
+    # --- CONFIGURACIÓ NETEJA DE KIBANA ---
+    - name: Reescriure kibana.yml net amb la connexió configurada via credencials
+      copy:
+        dest: /etc/kibana/kibana.yml
+        owner: root
+        group: kibana
+        mode: '0660'
+        content: |
+          server.port: 5601
+          server.host: "0.0.0.0"
+          elasticsearch.hosts: ["http://localhost:9200"]
+          elasticsearch.username: "kibana_system"
+          elasticsearch.password: "{{ kibana_internal_password.stdout }}"
+
+    - name: Assegurar que Kibana està actiu i habilitat a l'arrencada
+      systemd:
+        name: kibana
+        state: restarted
+        enabled: yes
