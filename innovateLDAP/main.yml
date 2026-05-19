@@ -1,0 +1,4 @@
+---
+# main.yml
+- import_playbook: maquina.yml
+- import_playbook: openldap.yml
