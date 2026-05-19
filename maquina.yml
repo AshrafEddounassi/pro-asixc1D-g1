@@ -1,0 +1,94 @@
+---
+- name: Desplegament d'infraestructura a AWS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    region: "us-east-1"
+    key_name: "vockey"
+    ssh_user: "ubuntu"
+    key_path: "~/.ssh/vockey.pem"
+
+  tasks:
+
+    - name: Obtener VPC por defecto
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ region }}"
+        filters:
+          isDefault: "true"
+      register: vpc_info
+
+    - name: Obtener subnet de la VPC
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ region }}"
+        filters:
+          vpc-id: "{{ vpc_info.vpcs[0].vpc_id }}"
+      register: subnet_info
+
+    - name: Obtener última AMI Ubuntu 24.04
+      amazon.aws.ec2_ami_info:
+        region: "{{ region }}"
+        owners: "099720109477"
+        filters:
+          name: "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
+      register: ami_info
+
+    - name: Crear Security Group (SSH + LDAP)
+      amazon.aws.ec2_security_group:
+        name: "sg_openldap"
+        description: "SSH + LDAP"
+        vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            ports: 22
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            ports: 389
+            cidr_ip: 0.0.0.0/0
+      register: sg_info
+
+    - name: Crear instancia EC2
+      amazon.aws.ec2_instance:
+        name: "ldap_server"
+        region: "{{ region }}"
+        key_name: "{{ key_name }}"
+        instance_type: t3.small
+        security_group: "{{ sg_info.group_id }}"
+        vpc_subnet_id: "{{ subnet_info.subnets[0].subnet_id }}"
+        image_id: "{{ (ami_info.images | sort(attribute='creation_date') | last).image_id }}"
+        network:
+          assign_public_ip: true
+        volumes:
+          - device_name: /dev/sda1
+            ebs:
+              volume_size: 20
+              delete_on_termination: true
+        wait: true
+      register: ec2_info
+
+    - name: Asignar Elastic IP
+      amazon.aws.ec2_eip:
+        region: "{{ region }}"
+        device_id: "{{ ec2_info.instances[0].instance_id }}"
+      register: eip_info
+
+    # 🔥 FIX CRÍTICO: esperar SSH correctamente
+    - name: Esperar a que SSH esté disponible
+      ansible.builtin.wait_for:
+        host: "{{ eip_info.public_ip }}"
+        port: 22
+        delay: 30
+        timeout: 600
+
+    - name: Añadir host dinámico
+      ansible.builtin.add_host:
+        name: ldap_server
+        ansible_host: "{{ eip_info.public_ip }}"
+        ansible_user: "{{ ssh_user }}"
+        ansible_ssh_private_key_file: "{{ key_path }}"
+
+    - name: Mostrar IP final
+      debug:
+        msg: "LDAP disponible en {{ eip_info.public_ip }}"

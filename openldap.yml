@@ -1,0 +1,66 @@
+---
+- name: Configurar OpenLDAP
+  hosts: ldap_server
+  become: true
+  gather_facts: true
+
+  vars:
+    ldap_domain: innovatetech.cat
+    ldap_base_dn: dc=innovatetech,dc=cat
+    ldap_admin_pass: "@ITB2026"
+
+  tasks:
+
+    - name: Actualizar repositorios
+      apt:
+        update_cache: true
+
+    # 🔥 IMPORTANTE: preconfiguración ANTES de instalar
+
+    - name: Configurar dominio LDAP
+      debconf:
+        name: slapd
+        question: slapd/domain
+        value: "{{ ldap_domain }}"
+        vtype: string
+
+    - name: Configurar organización
+      debconf:
+        name: slapd
+        question: shared/organization
+        value: "InnovateTech"
+        vtype: string
+
+    - name: Password admin LDAP (1)
+      debconf:
+        name: slapd
+        question: slapd/password1
+        value: "{{ ldap_admin_pass }}"
+        vtype: password
+
+    - name: Password admin LDAP (2)
+      debconf:
+        name: slapd
+        question: slapd/password2
+        value: "{{ ldap_admin_pass }}"
+        vtype: password
+
+    - name: Evitar configuración interactiva
+      debconf:
+        name: slapd
+        question: slapd/no_configuration
+        value: "false"
+        vtype: boolean
+
+    - name: Instalar OpenLDAP
+      apt:
+        name:
+          - slapd
+          - ldap-utils
+        state: present
+
+    - name: Habilitar servicio slapd
+      service:
+        name: slapd
+        state: restarted
+        enabled: true
