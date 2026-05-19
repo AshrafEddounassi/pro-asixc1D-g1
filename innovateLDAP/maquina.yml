@@ -92,3 +92,41 @@
     - name: Mostrar IP final
       debug:
         msg: "LDAP disponible en {{ eip_info.public_ip }}"
+
+# FASE 2: Configuració de l'usuari OS (connectant com a ubuntu)
+- name: Configuració de l'usuari OS (connectant com a ubuntu)
+  hosts: ldap_server
+  become: true
+  remote_user: ubuntu
+  tasks:
+    - name: Crear usuari 'innovateadmin'
+      ansible.builtin.user:
+        name: innovateadmin
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+
+    - name: Crear directori .ssh per a innovateadmin 
+      ansible.builtin.file:
+        path: /home/innovateadmin/.ssh
+        state: directory
+        owner: innovateadmin
+        group: innovateadmin
+        mode: '0700'
+
+    - name: Copiar claus SSH de ubuntu a innovateadmin
+      ansible.builtin.copy:
+        src: /home/ubuntu/.ssh/authorized_keys
+        dest: /home/innovateadmin/.ssh/authorized_keys
+        remote_src: true
+        owner: innovateadmin
+        group: innovateadmin
+        mode: '0600'
+
+    - name: Permetre sudo sense contrasenya per a innovateadmin
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers.d/innovateadmin
+        line: "innovateadmin ALL=(ALL) NOPASSWD:ALL"
+        create: true
+        mode: '0440'
