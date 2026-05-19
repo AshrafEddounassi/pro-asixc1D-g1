@@ -8,6 +8,7 @@
     ldap_domain: innovatetech.cat
     ldap_base_dn: dc=innovatetech,dc=cat
     ldap_admin_pass: "@ITB2026"
+    ldap_ftp_pass: "@FTP2026"
 
   tasks:
 
@@ -64,3 +65,27 @@
         name: slapd
         state: restarted
         enabled: true
+
+    # 🔑 NUEVA SECCIÓN: Creación del usuario para ProFTPD sin permisos de admin
+
+    - name: Crear archivo LDIF para el usuario ftpadmin
+      copy:
+        dest: /tmp/ftpadmin.ldif
+        content: |
+          dn: uid=ftpadmin,{{ ldap_base_dn }}
+          objectClass: top
+          objectClass: person
+          objectClass: organizationalPerson
+          objectClass: inetOrgPerson
+          cn: ftpadmin
+          sn: ftpadmin
+          uid: ftpadmin
+          userPassword: {{ ldap_ftp_pass }}
+        mode: '0600'
+
+    - name: Insertar el usuario ftpadmin en el directorio LDAP
+      shell: |
+        ldapadd -x -D "cn=admin,{{ ldap_base_dn }}" -w "{{ ldap_admin_pass }}" -f /tmp/ftpadmin.ldif
+      register: ldap_result
+      failed_when: "ldap_result.rc != 0 and 'Already exists' not in ldap_result.stderr"
+      changed_when: "'Already exists' not in ldap_result.stderr"
