@@ -1,0 +1,172 @@
+---
+# FASE 1: Provisionamiento AWS
+- name: Desplegar infraestructura a AWS Academy
+  hosts: localhost
+  gather_facts: false
+  vars:
+    aws_region: "us-east-1"
+    ami_id: "ami-080e1f13689e07408"
+    instance_type: "t3.small"
+    key_name: "vockey"
+    security_group: "db-security-group"
+    elastic_ip: "13.216.34.192"
+  tasks:
+    - name: Crear Grup de Seguretat per a SSH i MariaDB
+      amazon.aws.ec2_security_group:
+        name: "{{ security_group }}"
+        description: "Permetre ports SSH i MariaDB"
+        region: "{{ aws_region }}"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 3306
+            to_port: 3306
+            cidr_ip: 0.0.0.0/0
+
+    - name: Crear la instància EC2
+      amazon.aws.ec2_instance:
+        name: "InnovateTech-DB-Server"
+        key_name: "{{ key_name }}"
+        instance_type: "{{ instance_type }}"
+        image_id: "{{ ami_id }}"
+        region: "{{ aws_region }}"
+        security_group: "{{ security_group }}"
+        wait: true                             
+        wait_timeout: 300
+        volumes:
+          - device_name: /dev/sda1
+            ebs:
+              volume_size: 20
+              volume_type: gp3
+              delete_on_termination: true
+      register: ec2
+
+    - name: Forçar espera addicional perquè la instància passi de pending a running
+      amazon.aws.ec2_instance_info:
+        region: "{{ aws_region }}"
+        instance_ids: "{{ ec2.instances[0].instance_id }}"
+      register: ec2_status
+      until: ec2_status.instances[0].state.name == "running"
+      retries: 10
+      delay: 5
+
+    - name: Associar la IP Elàstica 
+      amazon.aws.ec2_eip:
+        region: "{{ aws_region }}"
+        public_ip: "{{ elastic_ip }}"
+        device_id: "{{ ec2.instances[0].instance_id }}"
+      when: ec2.instances is defined and (ec2.instances | length > 0)
+
+    - name: Esperar connexió SSH al port 22
+      wait_for:
+        host: "{{ elastic_ip }}"
+        port: 22
+        state: started
+        delay: 15
+        timeout: 300
+
+# FASE 2: Configuració de l'usuari OS (connectant com a ubuntu)
+- name: Configuració de l'usuari OS (connectant com a ubuntu)
+  hosts: db_servers
+  become: true
+  remote_user: ubuntu
+  tasks:
+    - name: Crear usuari 'innovateadmin'
+      ansible.builtin.user:
+        name: innovateadmin
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+
+    - name: Crear directori .ssh per a innovateadmin 
+      ansible.builtin.file:
+        path: /home/innovateadmin/.ssh
+        state: directory
+        owner: innovateadmin
+        group: innovateadmin
+        mode: '0700'
+
+    - name: Copiar claus SSH de ubuntu a innovateadmin
+      ansible.builtin.copy:
+        src: /home/ubuntu/.ssh/authorized_keys
+        dest: /home/innovateadmin/.ssh/authorized_keys
+        remote_src: true
+        owner: innovateadmin
+        group: innovateadmin
+        mode: '0600'
+
+    - name: Permetre sudo sense contrasenya per a innovateadmin
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers.d/innovateadmin
+        line: "innovateadmin ALL=(ALL) NOPASSWD:ALL"
+        create: true
+        mode: '0440'
+
+# FASE 3: Instal·lació de MariaDB i desplegament de l'script (com a innovateadmin)
+- name: Instal·lar i configurar MariaDB
+  hosts: db_servers
+  become: true
+  remote_user: innovateadmin
+  vars:
+    db_name: "innovatetech_gestio"
+  tasks:
+    - name: Instal·lar MariaDB
+      apt:
+        name: [ 'mariadb-server', 'python3-pymysql' ]
+        state: present
+        update_cache: yes
+
+    - name: Habilitar connexions remotes
+      lineinfile:
+        path: /etc/mysql/mariadb.conf.d/50-server.cnf
+        regexp: '^bind-address'
+        line: 'bind-address            = 0.0.0.0'
+      notify: Reiniciar MariaDB
+
+    - name: Crear la Base de Dades
+      community.mysql.mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Pujar l'esquema de taules (schema.sql)
+      copy:
+        src: schema.sql
+        dest: /tmp/schema.sql
+
+    - name: Importar l'estructura de la base de dades
+      community.mysql.mysql_db:
+        name: "{{ db_name }}"
+        state: import
+        target: /tmp/schema.sql
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+    
+    - name: Pujar l'esquema de rols de seguretat
+      copy:
+        src: rols_db.sql
+        dest: /tmp/rols_db.sql
+    
+    - name: Aplicar Rols de MariaDB
+      community.mysql.mysql_db:
+        name: "{{ db_name }}"
+        state: import
+        target: /tmp/rols_db.sql
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Instal·lació de l'script automàtic 
+      copy:
+        src: crear_usuaris.py
+        dest: /usr/local/bin/crear_usuaris
+        owner: innovateadmin
+        group: innovateadmin
+        mode: '0755'
+
+  handlers:
+    - name: Reiniciar MariaDB
+      service:
+        name: mariadb
+        state: restarted
