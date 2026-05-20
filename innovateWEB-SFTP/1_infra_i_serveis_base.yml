@@ -1,8 +1,8 @@
 ---
 # ==============================================================================
-# PART 1: DESPLEGAMENT DE LA INSTÀNCIA A AWS (LOCALHOST)
+# PART 1: DESPLEGAMENT DE LA INSTÀNCIA I IP ELÀSTICA A AWS (LOCALHOST)
 # ==============================================================================
-- name: Provisionar Infraestructura a AWS des de Zero
+- name: Provisionar Infraestructura i IP Elàstica a AWS des de Zero
   hosts: localhost
   gather_facts: false
   tasks:
@@ -40,32 +40,39 @@
           name: "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
       register: ami_out
 
-    - name: Aixecar la instància EC2 t2.micro
+    - name: Aixecar la instància EC2 t2.micro (Vinculada a la ID del SG)
       amazon.aws.ec2_instance:
         name: "InnovateTech-WebServer"
         key_name: "innovateadmin_key_pair"
-        security_group: "innovatetech-web-sftp-sg"
+        security_groups: ["{{ sg_out.group_id }}"]
         instance_type: "t2.micro"
         image_id: "{{ ami_out.images[-1].image_id }}"
         region: "us-east-1"
         wait: true
       register: ec2_out
 
-    - name: Afegir la nova IP dinàmicament a l'inventari d'Ansible
+    - name: Sol·licitar i associar una IP Elàstica (EIP) a la instància
+      amazon.aws.ec2_eip:
+        device_id: "{{ ec2_out.instances[0].instance_id }}"  # Modificat per compatibilitat de versió
+        region: "us-east-1"
+        state: present
+      register: eip_out
+
+    - name: Afegir la IP Elàstica dinàmicament a l'inventari d'Ansible
       ansible.builtin.add_host:
-        name: "{{ ec2_out.instances[0].public_ip_address }}"
+        name: "{{ eip_out.public_ip }}"
         groups: project_server
 
-    - name: Guardar la nova IP en un fitxer hosts.ini local per seguretat
+    - name: Guardar la IP Elàstica al fitxer hosts.ini local
       ansible.builtin.copy:
         dest: "./hosts.ini"
         content: |
           [project_server]
-          {{ ec2_out.instances[0].public_ip_address }}
+          {{ eip_out.public_ip }}
 
-    - name: Esperar que el port SSH de la nova màquina estigui actiu
+    - name: Esperar que el port SSH de la IP Elàstica estigui actiu
       ansible.builtin.wait_for:
-        host: "{{ ec2_out.instances[0].public_ip_address }}"
+        host: "{{ eip_out.public_ip }}"
         port: 22
         timeout: 300
 
@@ -79,9 +86,10 @@
   vars:
     ansible_ssh_private_key_file: "./innovateadmin_key"
   tasks:
-    # --------------------------------------------------------------------------
-    # SEGURETAT I CREACIÓ DE L'USUARI ADMINISTRADOR (REQUERIMENT ENUNCIAT)
-    # --------------------------------------------------------------------------
+    - name: Desactivar el tallafocs local UFW d'Ubuntu per evitar Timeouts
+      ansible.builtin.shell: ufw disable
+      changed_when: true
+
     - name: Crear el nou usuari administrador del sistema
       ansible.builtin.user:
         name: innovateadmin
@@ -101,7 +109,7 @@
         state: present
         key: "{{ lookup('file', './innovateadmin_key.pub') }}"
 
-    - name: Forçar que SSH NOMS accepti claus privades i desactivem el root
+    - name: Forçar que SSH només accepti claus privades i desactivem el root
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
         regexp: "{{ item.regexp }}"
@@ -113,14 +121,11 @@
         - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
       notify: Reiniciar SSH
 
-    # --------------------------------------------------------------------------
-    # INSTAL·LACIÓ I CONFIGURACIÓ DE SERVEIS
-    # --------------------------------------------------------------------------
     - name: Actualitzar l'índex de paquets del sistema APT
       ansible.builtin.apt:
         update_cache: true
 
-    - name: Instal·lar NGINX, PHP i ProFTPd amb mòduls LDAP i CRYPTO
+    - name: Instal·lar NGINX, PHP i ProFTPd com a mòduls LDAP i CRYPTO
       ansible.builtin.apt:
         name:
           - nginx
@@ -170,7 +175,6 @@
                   LDAPAuthBinds on
                   LDAPLog /var/log/proftpd/ldap.log
                   
-                  # Mapeig global cap a l'ID de l'usuari 'ubuntu' natiu (1000)
                   LDAPDefaultUID 1000
                   LDAPDefaultGID 1000
                   LDAPForceDefaultUID on
