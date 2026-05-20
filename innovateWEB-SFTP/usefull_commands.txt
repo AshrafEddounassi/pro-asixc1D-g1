@@ -1,0 +1,25 @@
+# Redefinir el nom per al playbook (si el vas pujar sense .pem, treu el .pem de la comanda)
+cp labsuser.pem innovateadmin_key
+
+# Capar els permisos perquè Linux l'accAccepti (permís de lectura només per al teu usuari)
+chmod 400 innovateadmin_key
+
+# Generar la clau pública (.pub) que Ansible pujarà automàticament a AWS
+ssh-keygen -y -f ./innovateadmin_key > ./innovateadmin_key.pub
+
+# Instal·lar Ansible i les llibreries Boto3 de xarxa d'AWS
+pip install ansible boto3 botocore
+
+# Descarregar la col·lecció oficial de mòduls d'AWS per a Ansible
+ansible-galaxy collection install amazon.aws
+export ANSIBLE_HOST_KEY_CHECKING=False
+
+# 1. Crear la màquina a AWS i muntar els serveis base (NGINX, PHP, ProFTPd, SFTP+LDAP)
+# (Aquest NO porta '-i hosts.ini' perquè primer treballa en local contra AWS)
+ansible-playbook 1_infra_i_serveis_base.yml
+
+# 2. Desplegar el codi de la Web App enllaçat a la base de dades remota
+ansible-playbook -i hosts.ini 2_webapp_config.yml
+
+# 3. Integrar el teu servidor al clúster de logs centralitzat del teu company
+ansible-playbook -i hosts.ini 3_logs_config.yml
