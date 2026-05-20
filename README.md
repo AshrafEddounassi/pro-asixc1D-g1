@@ -18,7 +18,7 @@ This document provides a comprehensive overview of the architecture, network con
 | **Database Server** | `InnovateTech-DB-Server` | `t3.small` | `13.216.34.192` | 20GB GP3 | 🟢 Active |
 | **Logs Server** | `InnovateTech-Logs-Server` | `t3.large` | `23.21.142.115` | 20GB GP3 | 🟢 Active |
 | **LDAP Server** | *PENDING* | `t3.small` | *PENDING* | 20GB GP3 | 🟡 Provisioning |
-| **Audio Server** | *PENDING* | `t3.medium` | *PENDING* | 30GB GP3 | 🟡 Provisioning |
+| **Audio Server** | `InnovateTech-AudioServer` | `t3.medium` | `44.212.203.72` | 30GB GP3 | 🟢 Active |
 | **Video & Streaming** | *PENDING* | `t3.large` | *PENDING* | 50GB GP3 | 🟡 Provisioning |
 
 ---
@@ -50,9 +50,9 @@ This document provides a comprehensive overview of the architecture, network con
 * **Storage:** 20GB GP3
 
 ###  Audio Server
-* **Hostname:** `PENDING`
+* **Hostname:** `InnovateTech-AudioServer`
 * **Instance Type:** `t3.medium`
-* **IP Address:** `PENDING`
+* **IP Address:** `44.212.203.72`
 * **Storage:** 30GB GP3
 
 ###  Video & Streaming Server
