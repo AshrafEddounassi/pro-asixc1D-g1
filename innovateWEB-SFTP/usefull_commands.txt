@@ -23,3 +23,6 @@ ansible-playbook -i hosts.ini 2_webapp_config.yml
 
 # 3. Integrar el teu servidor al clúster de logs centralitzat del teu company
 ansible-playbook -i hosts.ini 3_logs_config.yml
+
+# Execució inicial forçant l'usuari de fàbrica:
+ansible-playbook -i hosts_audio.ini 2_audio_services_config.yml -u ubuntu
