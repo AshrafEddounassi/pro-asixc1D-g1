@@ -1,0 +1,174 @@
+---
+- name: Configurar l'Aplicació Web Dinàmica contra la Base de Dades
+  hosts: project_server
+  become: true
+  remote_user: ubuntu
+  vars:
+    ansible_ssh_private_key_file: "./innovateadmin_key"
+  tasks:
+    - name: Esborrar l'index html d'Ubuntu per defecte si existeix
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/www/html/index.html
+        - /var/www/html/index.nginx-debian.html
+
+    - name: Desplegar el Dashboard PHP enllaçat a la nova IP de BBDD
+      ansible.builtin.copy:
+        dest: /var/www/html/index.php
+        content: |
+          <?php
+          $host = '44.198.194.136';
+          $db   = 'innovatetech_gestio';
+          $user = 'innovate_admin';
+          $pass = 'AdminPassword2026!';
+          
+          try {
+              $pdo = new PDO("mysql:host=$host;dbname=$db;charset=utf8", $user, $pass);
+              $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+              $conn_status = true;
+          } catch (PDOException $e) {
+              $conn_status = false;
+              $conn_error = $e->getMessage();
+          }
+
+          function amagarDNI($dni) {
+              if (empty($dni)) return 'N/A (Client Extern)';
+              return '******' . substr($dni, -3);
+          }
+          ?>
+          <!DOCTYPE html>
+          <html lang="ca">
+          <head>
+              <meta charset="UTF-8">
+              <title>Innovate Tech - Panell de Gestió de CPD</title>
+              <style>
+                  body { font-family: 'Arial', sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
+                  .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-radius: 8px; }
+                  h1 { color: #1a365d; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+                  .status { padding: 10px; border-radius: 5px; margin-bottom: 20px; font-weight: bold; }
+                  .status.success { background-color: #c6f6d5; color: #22543d; border: 1px solid #9ae6b4; }
+                  .status.error { background-color: #fed7d7; color: #742a2a; border: 1px solid #feb2b2; }
+                  .section { margin-top: 30px; background: #fafafa; padding: 20px; border-radius: 6px; border-left: 5px solid #3182ce; }
+                  h2 { color: #2b6cb0; margin-top: 0; }
+                  table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white; }
+                  th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+                  th { background-color: #ebf8ff; color: #2b6cb0; }
+                  tr:hover { background-color: #f7fafc; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🚀 Innovate Tech — Sistema de Gestió Interna</h1>
+                  
+                  <?php if ($conn_status): ?>
+                      <div class="status success">● Connexió amb el servidor MariaDB (44.198.194.136) establerta correctament.</div>
+                  <?php else: ?>
+                      <div class="status error">❌ Error de Connexió a la Base de Dades: <?php echo $conn_error; ?></div>
+                  <?php endif; ?>
+
+                  <?php if ($conn_status): ?>
+                      <div class="section">
+                          <h2>👥 Usuaris del Sistema i Personal</h2>
+                          <table>
+                              <thead>
+                                  <tr>
+                                      <th>ID</th>
+                                      <th>Nom complet</th>
+                                      <th>Email</th>
+                                      <th>Tipus</th>
+                                      <th>Rol</th>
+                                      <th>DNI Empleat (Protegit)</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  <?php
+                                  try {
+                                      $stmt = $pdo->query("SELECT id_usuari, nom_complet, email, tipus_usuari, rol, dni_empleat FROM Usuaris");
+                                      while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                                          echo "<tr>";
+                                          echo "<td>" . htmlspecialchars($row['id_usuari']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['nom_complet']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['email']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['tipus_usuari']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['rol']) . "</td>";
+                                          echo "<td><code>" . amagarDNI($row['dni_empleat']) . "</code></td>";
+                                          echo "</tr>";
+                                      }
+                                  } catch (PDOException $e) {
+                                      echo "<tr><td colspan='6' style='color:red;'>Esperant dades d'Usuaris...</td></tr>";
+                                  }
+                                  ?>
+                              </tbody>
+                          </table>
+                      </div>
+
+                      <div class="section">
+                          <h2>🎬 Catàleg de Vídeos en Streaming</h2>
+                          <table>
+                              <thead>
+                                  <tr>
+                                      <th>Títol</th>
+                                      <th>Categoria</th>
+                                      <th>Durada</th>
+                                      <th>Enllaç</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  <?php
+                                  try {
+                                      $stmt = $pdo->query("SELECT titol, categoria, durada_minuts, enllac_servidor FROM Videos_Streaming");
+                                      while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                                          echo "<tr>";
+                                          echo "<td><strong>" . htmlspecialchars($row['titol']) . "</strong></td>";
+                                          echo "<td>" . htmlspecialchars($row['categoria']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['durada_minuts']) . " min</td>";
+                                          echo "<td><a href='" . htmlspecialchars($row['enllac_servidor']) . "' target='_blank'>Obre Streaming ↗</a></td>";
+                                          echo "</tr>";
+                                      }
+                                  } catch (PDOException $e) {
+                                      echo "<tr><td colspan='4' style='color:red;'>Esperant dades de vídeos...</td></tr>";
+                                  }
+                                  ?>
+                              </tbody>
+                          </table>
+                      </div>
+
+                      <div class="section">
+                          <h2>📊 Historial de Proves d'Amplada de Banda</h2>
+                          <table>
+                              <thead>
+                                  <tr>
+                                      <th>Data</th>
+                                      <th>Equip</th>
+                                      <th>Baixada</th>
+                                      <th>Pujada</th>
+                                      <th>Resultat</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  <?php
+                                  try {
+                                      $stmt = $pdo->query("SELECT data_hora, equip_mesurat, velocitat_baixada, velocitat_pujada, resultat FROM Mesura_Banda ORDER BY data_hora DESC");
+                                      while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                                          $status_color = (strtolower($row['resultat']) == 'acceptable') ? '#2e7d32' : '#c62828';
+                                          echo "<tr>";
+                                          echo "<td>" . htmlspecialchars($row['data_hora']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['equip_mesurat']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['velocitat_baixada']) . " Mbps</td>";
+                                          echo "<td>" . htmlspecialchars($row['velocitat_pujada']) . " Mbps</td>";
+                                          echo "<td style='color: $status_color; font-weight:bold;'>" . strtoupper(htmlspecialchars($row['resultat'])) . "</td>";
+                                          echo "</tr>";
+                                      }
+                                  } catch (PDOException $e) {
+                                      echo "<tr><td colspan='5' style='color:red;'>Esperant dades d'amplada de banda...</td></tr>";
+                                  }
+                                  ?>
+                              </tbody>
+                          </table>
+                      </div>
+                  <?php endif; ?>
+              </div>
+          </body>
+          </html>
