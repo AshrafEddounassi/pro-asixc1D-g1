@@ -70,15 +70,52 @@
         timeout: 300
 
 # ==============================================================================
-# PART 2: CONFIGURACIÓ DE SERVEIS BASE DINS DE LA INSTÀNCIA (UBUNTU)
+# PART 2: CONFIGURACIÓ DE SEGURETAT, USUARIS I SERVEIS BASE
 # ==============================================================================
-- name: Configurar Sistema Operatiu, NGINX i ProFTPd + LDAP
+- name: Habilitar seguretat SSH, Crear Administrador i Serveis
   hosts: project_server
   become: true
   remote_user: ubuntu
   vars:
     ansible_ssh_private_key_file: "./innovateadmin_key"
   tasks:
+    # --------------------------------------------------------------------------
+    # SEGURETAT I CREACIÓ DE L'USUARI ADMINISTRADOR (REQUERIMENT ENUNCIAT)
+    # --------------------------------------------------------------------------
+    - name: Crear el nou usuari administrador del sistema
+      ansible.builtin.user:
+        name: innovateadmin
+        shell: /bin/bash
+        groups: sudo
+        append: true
+
+    - name: Configurar permisos de sudo sense contrasenya per a innovateadmin
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/innovateadmin
+        content: "innovateadmin ALL=(ALL) NOPASSWD:ALL"
+        mode: '0440'
+
+    - name: Injectar la clau pública SSH per al nou usuari administrador
+      ansible.posix.authorized_key:
+        user: innovateadmin
+        state: present
+        key: "{{ lookup('file', './innovateadmin_key.pub') }}"
+
+    - name: Forçar que SSH NOMS accepti claus privades i desactivem el root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+      notify: Reiniciar SSH
+
+    # --------------------------------------------------------------------------
+    # INSTAL·LACIÓ I CONFIGURACIÓ DE SERVEIS
+    # --------------------------------------------------------------------------
     - name: Actualitzar l'índex de paquets del sistema APT
       ansible.builtin.apt:
         update_cache: true
@@ -159,3 +196,5 @@
       ansible.builtin.systemd: name=nginx state=restarted
     - name: Reiniciar ProFTPd
       ansible.builtin.systemd: name=proftpd state=restarted
+    - name: Reiniciar SSH
+      ansible.builtin.systemd: name=ssh state=restarted
