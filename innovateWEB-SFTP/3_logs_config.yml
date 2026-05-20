@@ -1,0 +1,93 @@
+---
+- name: Instal·lar i configurar Auditbeat al Servidor de CPD
+  hosts: project_server
+  become: yes
+  remote_user: ubuntu
+  vars:
+    ansible_ssh_private_key_file: "./innovateadmin_key"
+
+  tasks:
+    - name: Afegir clau GPG d'Elastic
+      ansible.builtin.apt_key:
+        url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        state: present
+
+    - name: Afegir repositori d'Elastic (versió 8.x)
+      ansible.builtin.apt_repository:
+        repo: "deb https://artifacts.elastic.co/packages/8.x/apt stable main"
+        state: present
+
+    - name: Instal·lar Auditbeat
+      ansible.builtin.apt:
+        name: auditbeat
+        state: present
+        update_cache: yes
+
+    - name: Desplegar la configuració d'Auditbeat
+      ansible.builtin.copy:
+        dest: /etc/auditbeat/auditbeat.yml
+        owner: root
+        group: root
+        mode: '0600' # Important per protegir la contrasenya
+        content: |
+          # =========================== Mòduls d'Auditbeat ===============================
+          auditbeat.modules:
+
+          # Mòdul Auditd
+          - module: auditd
+            audit_rules: |
+              -w /etc/passwd -p wa -k identity
+              -w /etc/group -p wa -k identity
+              -w /etc/shadow -p wa -k identity
+              -a always,exit -F arch=b64 -S open,openat,open_by_handle_at -F exit=-EACCES -k access
+              -a always,exit -F arch=b64 -S open,openat,open_by_handle_at -F exit=-EPERM -k access
+
+          # Mòdul d'integritat d'arxius (FIM)
+          - module: file_integrity
+            paths:
+            - /bin
+            - /usr/bin
+            - /sbin
+            - /usr/sbin
+            - /etc
+
+          # Mòdul de sistema
+          - module: system
+            datasets:
+              - host
+              - login
+              - process
+              - user
+            state.period: 12h
+            user.detect_password_changes: true
+            login.wtmp_file_pattern: /var/log/wtmp*
+            login.btmp_file_pattern: /var/log/btmp*
+
+          # =============================== Setup Kibana =================================
+          setup.kibana:
+            host: "23.21.142.115:5601"
+
+          # ================================= Outputs ====================================
+          output.elasticsearch:
+            hosts: ["http://23.21.142.115:9200"]
+            username: "elastic"
+            password: "f3jkcSUOpzd=R*9y3Me3"
+      notify: restart auditbeat
+
+    - name: Executar el setup d'Auditbeat (carregar dashboards a Kibana)
+      ansible.builtin.command: auditbeat setup
+      register: setup_result
+      changed_when: "'Loaded dashboards' in setup_result.stdout"
+      ignore_errors: yes # Ignorem errors per si Kibana encara no està llest
+
+    - name: Activar i iniciar el servei Auditbeat
+      ansible.builtin.systemd:
+        name: auditbeat
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: restart auditbeat
+      ansible.builtin.systemd:
+        name: auditbeat
+        state: restarted
