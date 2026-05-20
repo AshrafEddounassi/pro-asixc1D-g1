@@ -1,0 +1,161 @@
+---
+# ==============================================================================
+# PART 1: DESPLEGAMENT DE LA INSTÀNCIA A AWS (LOCALHOST)
+# ==============================================================================
+- name: Provisionar Infraestructura a AWS des de Zero
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Pujar la clau pública a AWS Key Pairs
+      amazon.aws.ec2_key:
+        name: "innovateadmin_key_pair"
+        key_material: "{{ lookup('file', './innovateadmin_key.pub') }}"
+        region: "us-east-1"
+
+    - name: Crear el Security Group amb els ports del projecte
+      amazon.aws.ec2_security_group:
+        name: "innovatetech-web-sftp-sg"
+        description: "SG per a NGINX (80) i SFTP (2222)"
+        region: "us-east-1"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: "0.0.0.0/0"  # SSH Administració
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: "0.0.0.0/0"  # Web Pública
+          - proto: tcp
+            from_port: 2222
+            to_port: 2222
+            cidr_ip: "0.0.0.0/0"  # SFTP/LDAP Usuaris
+      register: sg_out
+
+    - name: Buscar la darrera AMI oficial d'Ubuntu 24.04 LTS
+      amazon.aws.ec2_ami_info:
+        region: "us-east-1"
+        owners: "099720109477"  # Canonical
+        filters:
+          name: "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
+      register: ami_out
+
+    - name: Aixecar la instància EC2 t2.micro
+      amazon.aws.ec2_instance:
+        name: "InnovateTech-WebServer"
+        key_name: "innovateadmin_key_pair"
+        security_group: "innovatetech-web-sftp-sg"
+        instance_type: "t2.micro"
+        image_id: "{{ ami_out.images[-1].image_id }}"
+        region: "us-east-1"
+        wait: true
+      register: ec2_out
+
+    - name: Afegir la nova IP dinàmicament a l'inventari d'Ansible
+      ansible.builtin.add_host:
+        name: "{{ ec2_out.instances[0].public_ip_address }}"
+        groups: project_server
+
+    - name: Guardar la nova IP en un fitxer hosts.ini local per seguretat
+      ansible.builtin.copy:
+        dest: "./hosts.ini"
+        content: |
+          [project_server]
+          {{ ec2_out.instances[0].public_ip_address }}
+
+    - name: Esperar que el port SSH de la nova màquina estigui actiu
+      ansible.builtin.wait_for:
+        host: "{{ ec2_out.instances[0].public_ip_address }}"
+        port: 22
+        timeout: 300
+
+# ==============================================================================
+# PART 2: CONFIGURACIÓ DE SERVEIS BASE DINS DE LA INSTÀNCIA (UBUNTU)
+# ==============================================================================
+- name: Configurar Sistema Operatiu, NGINX i ProFTPd + LDAP
+  hosts: project_server
+  become: true
+  remote_user: ubuntu
+  vars:
+    ansible_ssh_private_key_file: "./innovateadmin_key"
+  tasks:
+    - name: Actualitzar l'índex de paquets del sistema APT
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Instal·lar NGINX, PHP i ProFTPd amb mòduls LDAP i CRYPTO
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - proftpd-mod-ldap
+          - proftpd-mod-crypto
+          - php-fpm
+          - php-mysql
+        state: present
+
+    - name: Configurar l'encaminament de PHP dins de NGINX
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/default
+        content: |
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+              root /var/www/html;
+              index index.php index.html index.htm;
+              server_name _;
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+
+              location ~ \.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
+              }
+          }
+      notify: Reiniciar NGINX
+
+    - name: Forçar activació de mod_sftp i mod_ldap a la configuració d'Ubuntu
+      ansible.builtin.shell: |
+        sed -i 's/^#\s*LoadModule mod_sftp.c/LoadModule mod_sftp.c/' /etc/proftpd/modules.conf
+        sed -i 's/^#\s*LoadModule mod_ldap.c/LoadModule mod_ldap.c/' /etc/proftpd/modules.conf
+      changed_when: true
+
+    - name: Crear fitxer de configuració SFTP enllaçat al LDAP del nou laboratori
+      ansible.builtin.copy:
+        dest: /etc/proftpd/conf.d/sftp_ldap.conf
+        content: |
+          <Global>
+              <IfModule mod_ldap.c>
+                  LDAPServer 54.174.227.251
+                  LDAPBindDN "cn=admin,dc=innovatetech,dc=cat" "@ITB2026"
+                  LDAPUsers "dc=innovatetech,dc=cat" (|(uid=%u)(sAMAccountName=%u))
+                  LDAPAuthBinds on
+                  LDAPLog /var/log/proftpd/ldap.log
+                  
+                  # Mapeig global cap a l'ID de l'usuari 'ubuntu' natiu (1000)
+                  LDAPDefaultUID 1000
+                  LDAPDefaultGID 1000
+                  LDAPForceDefaultUID on
+                  LDAPForceDefaultGID on
+              </IfModule>
+          </Global>
+
+          <VirtualHost 0.0.0.0>
+              SFTPEngine on
+              Port 2222
+              SFTPLog /var/log/proftpd/sftp.log
+              SFTPHostKey /etc/ssh/ssh_host_rsa_key
+              SFTPAuthMethods password
+
+              AuthOrder mod_ldap.c
+              RequireValidShell off
+              CreateHome on
+          </VirtualHost>
+      notify: Reiniciar ProFTPd
+
+  handlers:
+    - name: Reiniciar NGINX
+      ansible.builtin.systemd: name=nginx state=restarted
+    - name: Reiniciar ProFTPd
+      ansible.builtin.systemd: name=proftpd state=restarted
