@@ -6,7 +6,7 @@ This document provides a comprehensive overview of the architecture, network con
 
 ##  Architecture Overview
 
-![InnovateTech CPD Architecture](<InnovateTech CPD Servers Architecture.png>)
+![InnovateTech CPD Architecture](</Media/InnovateTech CPD Servers Architecture.png>)
 
 ---
 
