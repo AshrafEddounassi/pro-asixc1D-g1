@@ -1,0 +1,71 @@
+---
+# ==============================================================================
+# PROVISIONAMENT DE LA INFRAESTRUCTURA D'ÀUDIO A AWS (LOCALHOST)
+# ==============================================================================
+- name: Crear Instància i IP Elàstica per al Servidor d'Àudio
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Crear un Security Group exclusiu per al Servidor d'Àudio
+      amazon.aws.ec2_security_group:
+        name: "innovatetech-audio-sg"
+        description: "SG per a Web (80), Icecast2 (8000) i SSH (22)"
+        region: "us-east-1"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: "0.0.0.0/0"
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: "0.0.0.0/0"
+          - proto: tcp
+            from_port: 8000
+            to_port: 8000
+            cidr_ip: "0.0.0.0/0"
+      register: audio_sg_out
+
+    - name: Buscar la darrera AMI oficial d'Ubuntu 24.04 LTS
+      amazon.aws.ec2_ami_info:
+        region: "us-east-1"
+        owners: "099720109477"
+        filters:
+          name: "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
+      register: ami_out
+
+    - name: Aixecar la instància EC2 t2.small per a l'Àudio Server
+      amazon.aws.ec2_instance:
+        name: "InnovateTech-AudioServer"
+        key_name: "innovateadmin_key_pair"
+        security_groups: ["{{ audio_sg_out.group_id }}"]
+        instance_type: "t2.small"
+        image_id: "{{ ami_out.images[-1].image_id }}"
+        region: "us-east-1"
+        wait: true
+      register: ec2_audio_out
+
+    - name: Sol·licitar i associar una nova IP Elàstica (EIP) per a l'Àudio
+      amazon.aws.ec2_eip:
+        device_id: "{{ ec2_audio_out.instances[0].instance_id }}"
+        region: "us-east-1"
+        state: present
+      register: eip_audio_out
+
+    - name: Registrar la IP dinàmicament al grup de treball d'àudio
+      ansible.builtin.add_host:
+        name: "{{ eip_audio_out.public_ip }}"
+        groups: audio_server
+
+    - name: Guardar la IP Elàstica en un inventari separat (hosts_audio.ini)
+      ansible.builtin.copy:
+        dest: "./hosts_audio.ini"
+        content: |
+          [audio_server]
+          {{ eip_audio_out.public_ip }}
+
+    - name: Esperar que el port SSH respongui
+      ansible.builtin.wait_for:
+        host: "{{ eip_audio_out.public_ip }}"
+        port: 22
+        timeout: 300
