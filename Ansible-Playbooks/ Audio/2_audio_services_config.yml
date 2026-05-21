@@ -1,0 +1,332 @@
+---
+# ==============================================================================
+# CONFIGURACIÓ DE SEGURETAT, NGINX PROXY, SERVEIS D'ÀUDIO I LOGS (AUDITBEAT)
+# ==============================================================================
+- name: Instal·lar i Configurar la Plataforma d'Àudio Dinàmica i Logs
+  hosts: audio_server
+  become: true
+  remote_user: innovateadmin  # Ara entrem amb el nou administrador segur
+  vars:
+    ansible_ssh_private_key_file: "./innovateadmin_key"
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. SEGURETAT, USUARIS I TALLAFOCS
+    # --------------------------------------------------------------------------
+    - name: Desactivar el tallafocs local UFW d'Ubuntu
+      ansible.builtin.shell: ufw disable
+      changed_when: true
+
+    - name: Crear l'usuari administrador innovateadmin
+      ansible.builtin.user:
+        name: innovateadmin
+        shell: /bin/bash
+        groups: sudo
+        append: true
+
+    - name: Assignar permisos de sudo nets sense contrasenya a innovateadmin
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/innovateadmin
+        content: "innovateadmin ALL=(ALL) NOPASSWD:ALL"
+        mode: '0440'
+
+    - name: Injectar la clau pública SSH per al nou administrador
+      ansible.posix.authorized_key:
+        user: innovateadmin
+        state: present
+        key: "{{ lookup('file', './innovateadmin_key.pub') }}"
+
+    - name: Bloquejar l'usuari ubuntu per defecte i endurir l'SSH
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+        - { regexp: '^#?DenyUsers', line: 'DenyUsers ubuntu' }
+      notify: Reiniciar SSH
+
+    # --------------------------------------------------------------------------
+    # 2. INSTAL·LACIÓ I PRECONFIGURACIÓ DE PROGRAMARI (INCLOU FFMPEG)
+    # --------------------------------------------------------------------------
+    - name: Actualitzar repositoris i instal·lar eines base (debconf-utils)
+      ansible.builtin.apt:
+        name: debconf-utils
+        state: present
+        update_cache: yes
+
+    - name: Preconfigurar l'Icecast2 de forma silenciosa
+      ansible.builtin.debconf:
+        name: icecast2
+        question: "{{ item.q }}"
+        value: "{{ item.v }}"
+        vtype: "{{ item.t }}"
+      loop:
+        - { q: 'icecast2/icecast-setup', v: 'true', t: 'boolean' }
+        - { q: 'icecast2/adminpassword', v: 'AdminPassword2026!', t: 'password' }
+        - { q: 'icecast2/sourcepassword', v: 'SourcePassword2026!', t: 'password' }
+        - { q: 'icecast2/relaypassword', v: 'RelayPassword2026!', t: 'password' }
+
+    - name: Instal·lar paquets NGINX Icecast2 Ezstream FFMPEG i wget
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - icecast2
+          - ezstream
+          - wget
+          - ffmpeg
+        state: present
+
+    - name: Obrir l'Icecast2 perquè escolti a tot arreu
+      ansible.builtin.replace:
+        path: /etc/icecast2/icecast.xml
+        regexp: '<bind-address>127.0.0.1</bind-address>'
+        replace: '<bind-address>0.0.0.0</bind-address>'
+      notify: Reiniciar Icecast
+
+    - name: Configurar NGINX com a Proxy Invers transparent (Port 80 directe)
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/default
+        content: |
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+              server_name _;
+              
+              location = / {
+                  rewrite ^/$ /index.html break;
+                  proxy_pass http://127.0.0.1:8000;
+                  proxy_set_header Host $host;
+              }
+              location / {
+                  proxy_pass http://127.0.0.1:8000/;
+                  proxy_buffering off;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+              }
+          }
+      notify: Reiniciar NGINX
+
+    # --------------------------------------------------------------------------
+    # 3. INTERFÍCIE WEB GRÀFICA I REPRODUCTOR
+    # --------------------------------------------------------------------------
+    - name: Injectar el nostre Reproductor d'Àudio HTML5 a l'Icecast
+      ansible.builtin.copy:
+        dest: /usr/share/icecast2/web/index.html
+        mode: '0644'
+        content: |
+          <!DOCTYPE html>
+          <html lang="ca">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Innovate Tech - Portal d'Àudio</title>
+              <style>
+                  body { font-family: 'Arial', sans-serif; background-color: #e2e8f0; margin: 0; padding: 40px; text-align: center; color: #2d3748; }
+                  .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+                  h1 { color: #2b6cb0; border-bottom: 2px solid #edf2f7; padding-bottom: 20px; }
+                  .channel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 30px; }
+                  .channel-card { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: inset 0 2px 4px 0 rgba(0,0,0,0.06); }
+                  .channel-card h2 { margin-top: 0; color: #2c5282; font-size: 1.5rem; }
+                  audio { width: 100%; margin-top: 15px; outline: none; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🎧 Innovate Tech CPD - Plataforma d'Àudio</h1>
+                  <p>Tria el canal que vols escoltar i prem el Play.</p>
+                  <div class="channel-grid">
+                      <div class="channel-card">
+                          <h2>📻 Canal: Ràdio CPD</h2>
+                          <p>Emissió general (Bucle Mp3).</p>
+                          <audio controls preload="none">
+                              <source src="/radio" type="audio/mpeg">
+                          </audio>
+                      </div>
+                      <div class="channel-card">
+                          <h2>⭐ Canal: Premium</h2>
+                          <p>Música Alternativa (Bucle Mp3).</p>
+                          <audio controls preload="none">
+                              <source src="/premium" type="audio/mpeg">
+                          </audio>
+                      </div>
+                  </div>
+              </div>
+          </body>
+          </html>
+
+    # --------------------------------------------------------------------------
+    # 4. CONFIGURACIÓ DE LES FONTS D'EMISSIÓ (EZSTREAM)
+    # --------------------------------------------------------------------------
+    - name: Crear la carpeta per a les configuracions d'emissió
+      ansible.builtin.file:
+        path: /etc/ezstream
+        state: directory
+        mode: '0755'
+
+    - name: Descarregar cançons de prova MP3
+      ansible.builtin.get_url:
+        url: "{{ item.u }}"
+        dest: "{{ item.d }}"
+        mode: '0644'
+      loop:
+        - { u: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', d: '/etc/ezstream/audio_radio.mp3' }
+        - { u: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3', d: '/etc/ezstream/audio_premium.mp3' }
+
+    - name: Generar les Playlists de text
+      ansible.builtin.copy:
+        dest: "{{ item.d }}"
+        content: "{{ item.c }}"
+        mode: '0644'
+      loop:
+        - { d: '/etc/ezstream/playlist_radio.txt', c: '/etc/ezstream/audio_radio.mp3' }
+        - { d: '/etc/ezstream/playlist_premium.txt', c: '/etc/ezstream/audio_premium.mp3' }
+
+    - name: Generar fitxers XML d'Ezstream cap a l'Icecast
+      ansible.builtin.copy:
+        dest: "{{ item.d }}"
+        mode: '0600'
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <ezstream>
+              <servers>
+                  <server>
+                      <hostname>127.0.0.1</hostname>
+                      <port>8000</port>
+                      <password>SourcePassword2026!</password>
+                  </server>
+              </servers>
+              <streams>
+                  <stream>
+                      <mountpoint>{{ item.m }}</mountpoint>
+                      <format>MP3</format>
+                      <stream_name>Canal {{ item.m }}</stream_name>
+                      <stream_url>http://127.0.0.1:8000{{ item.m }}</stream_url>
+                      <stream_description>Emissió Contínua</stream_description>
+                      <public>No</public>
+                  </stream>
+              </streams>
+              <intakes>
+                  <intake>
+                      <type>playlist</type>
+                      <filename>{{ item.p }}</filename>
+                      <shuffle>0</shuffle>
+                      <stream_once>0</stream_once>
+                  </intake>
+              </intakes>
+          </ezstream>
+      loop:
+        - { d: '/etc/ezstream/ezstream_radio.xml', m: '/radio', p: '/etc/ezstream/playlist_radio.txt' }
+        - { d: '/etc/ezstream/ezstream_premium.xml', m: '/premium', p: '/etc/ezstream/playlist_premium.txt' }
+
+    - name: Crear Serveis Systemd
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/ezstream-{{ item.name }}.service"
+        content: |
+          [Unit]
+          Description=Ràdio Automàtica {{ item.name }}
+          After=icecast2.service
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/ezstream -c /etc/ezstream/ezstream_{{ item.name }}.xml
+          Restart=always
+          RestartSec=5
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+      loop:
+        - { name: 'radio' }
+        - { name: 'premium' }
+
+    - name: Activar les emissions d'Ezstream
+      ansible.builtin.systemd:
+        name: "ezstream-{{ item }}"
+        enabled: yes
+        state: restarted
+        daemon_reload: yes
+      loop:
+        - radio
+        - premium
+
+    # --------------------------------------------------------------------------
+    # 5. INTEGRACIÓ DE LOGS (AUDITBEAT) CONTRA EL SERVIDOR CENTRAL
+    # --------------------------------------------------------------------------
+    - name: Afegir clau GPG d'Elastic
+      ansible.builtin.apt_key:
+        url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        state: present
+
+    - name: Afegir repositori d'Elastic (versió 8.x)
+      ansible.builtin.apt_repository:
+        repo: "deb https://artifacts.elastic.co/packages/8.x/apt stable main"
+        state: present
+
+    - name: Instal·lar Auditbeat
+      ansible.builtin.apt:
+        name: auditbeat
+        state: present
+        update_cache: yes
+
+    - name: Desplegar la configuració d'Auditbeat
+      ansible.builtin.copy:
+        dest: /etc/auditbeat/auditbeat.yml
+        owner: root
+        group: root
+        mode: '0600'
+        content: |
+          auditbeat.modules:
+          - module: auditd
+            audit_rules: |
+              -w /etc/passwd -p wa -k identity
+              -w /etc/group -p wa -k identity
+              -w /etc/shadow -p wa -k identity
+              -a always,exit -F arch=b64 -S open,openat,open_by_handle_at -F exit=-EACCES -k access
+              -a always,exit -F arch=b64 -S open,openat,open_by_handle_at -F exit=-EPERM -k access
+          - module: file_integrity
+            paths:
+            - /bin
+            - /usr/bin
+            - /sbin
+            - /usr/sbin
+            - /etc
+          - module: system
+            datasets:
+              - host
+              - login
+              - process
+              - user
+            state.period: 12h
+            user.detect_password_changes: true
+            login.wtmp_file_pattern: /var/log/wtmp*
+            login.btmp_file_pattern: /var/log/btmp*
+          setup.kibana:
+            host: "23.21.142.115:5601"
+          output.elasticsearch:
+            hosts: ["http://23.21.142.115:9200"]
+            username: "elastic"
+            password: "f3jkcSUOpzd=R*9y3Me3"
+      notify: Reiniciar Auditbeat
+
+    - name: Executar el setup d'Auditbeat (carregar dashboards a Kibana)
+      ansible.builtin.command: auditbeat setup
+      register: setup_result
+      changed_when: "'Loaded dashboards' in setup_result.stdout"
+      ignore_errors: yes
+
+    - name: Activar i iniciar el servei Auditbeat
+      ansible.builtin.systemd:
+        name: auditbeat
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: Reiniciar SSH
+      ansible.builtin.systemd: name=ssh state=restarted
+    - name: Reiniciar NGINX
+      ansible.builtin.systemd: name=nginx state=restarted
+    - name: Reiniciar Icecast
+      ansible.builtin.systemd: name=icecast2 state=restarted
+    - name: Reiniciar Auditbeat
+      ansible.builtin.systemd: name=auditbeat state=restarted
