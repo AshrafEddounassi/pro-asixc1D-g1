@@ -13,7 +13,7 @@
       loop:
         - /var/www/html/index.html
         - /var/www/html/index.nginx-debian.html
-        - /var/www/html/index.php  # <-- CRÍTIC: Esborrem el PHP vell que bloquejava la nova Landig Page
+        - /var/www/html/index.php
 
     - name: Desplegar la Landing Page del Portal d'Innovate Tech
       ansible.builtin.copy:
@@ -133,7 +133,7 @@
 
                   <a href="http://32.195.130.65:8096" target="_blank" class="card">
                       <div class="icon">📹</div>
-                      <h2>Video streaming</h1>
+                      <h2>Video streaming</h2>
                       <p>Connecta't al servidor de streaming de video.</p>
                   </a>
                   <a href="https://32.195.130.65:8443" target="_blank" class="card">
@@ -197,13 +197,33 @@
                   th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
                   th { background-color: #ebf8ff; color: #2b6cb0; }
                   tr:hover { background-color: #f7fafc; }
+                  
+                  .btn { background: #38a169; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-top: 10px;}
+                  .btn:hover { background: #2f855a; }
+                  .form-container { display: none; background: #e2e8f0; padding: 20px; border-radius: 5px; margin-top: 15px; border: 1px solid #cbd5e0; }
+                  .form-container input, .form-container select { padding: 8px; margin: 5px 0 15px 0; width: 100%; box-sizing: border-box; border: 1px solid #a0aec0; border-radius: 4px; }
+                  .msg-success { padding: 15px; background: #c6f6d5; color: #22543d; border-radius: 5px; margin-bottom: 20px; border: 1px solid #9ae6b4; font-weight: bold;}
+                  .msg-error { padding: 15px; background: #fed7d7; color: #742a2a; border-radius: 5px; margin-bottom: 20px; border: 1px solid #feb2b2; font-weight: bold;}
               </style>
+              <script>
+                  function toggleForm() {
+                      var form = document.getElementById('trucadaForm');
+                      form.style.display = form.style.display === 'block' ? 'none' : 'block';
+                  }
+              </script>
           </head>
           <body>
               <div class="container">
                   <a href="/" class="nav-back">← Tornar a l'Inici</a>
                   <h1>🚀 Innovate Tech — Sistema de Gestió Interna</h1>
                   
+                  <?php if (isset($_GET['msg'])): ?>
+                      <div class="msg-success">✅ <?php echo htmlspecialchars($_GET['msg']); ?></div>
+                  <?php endif; ?>
+                  <?php if (isset($_GET['err'])): ?>
+                      <div class="msg-error">❌ Error: <?php echo htmlspecialchars($_GET['err']); ?></div>
+                  <?php endif; ?>
+
                   <?php if ($conn_status): ?>
                       <div class="status success">● Connexió amb el servidor MariaDB (44.198.194.136) establerta correctament.</div>
                   <?php else: ?>
@@ -227,7 +247,7 @@
                               <tbody>
                                   <?php
                                   try {
-                                      $stmt = $pdo->query("SELECT id_usuari, nom_complet, email, tipus_usuari, rol, dni_empleat FROM Usuaris");
+                                      $stmt = $pdo->query("SELECT id_usuari, nom_complet, email, tipus_usuari, rol, dni_empleat FROM Usuaris LIMIT 10");
                                       while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                                           echo "<tr>";
                                           echo "<td>" . htmlspecialchars($row['id_usuari']) . "</td>";
@@ -260,7 +280,7 @@
                               <tbody>
                                   <?php
                                   try {
-                                      $stmt = $pdo->query("SELECT titol, categoria, durada_minuts, enllac_servidor FROM Videos_Streaming");
+                                      $stmt = $pdo->query("SELECT titol, categoria, durada_minuts, enllac_servidor FROM Videos_Streaming LIMIT 10");
                                       while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                                           echo "<tr>";
                                           echo "<td><strong>" . htmlspecialchars($row['titol']) . "</strong></td>";
@@ -278,33 +298,69 @@
                       </div>
 
                       <div class="section">
-                          <h2>📊 Historial de Proves d'Amplada de Banda</h2>
+                          <h2>📞 Registre Històric de Trucades</h2>
+                          <button class="btn" onclick="toggleForm()">+ Afegir Nova Trucada</button>
+                          
+                          <div id="trucadaForm" class="form-container">
+                              <h3 style="color:#1a365d; margin-top:0;">Autenticació i Inserció de Dades</h3>
+                              <form action="processar_trucada.php" method="POST">
+                                  <label><strong>Email d'Usuari:</strong></label>
+                                  <input type="email" name="email_operari" required placeholder="ex: empleat@innovate.com">
+                                  
+                                  <label><strong>PIN de Seguretat (DNI/NIE):</strong></label>
+                                  <input type="password" name="dni_operari" required placeholder="Introdueix el teu DNI complet">
+                                  
+                                  <hr style="border: 1px solid #cbd5e0; margin: 15px 0;">
+
+                                  <label>ID Usuari Origen (Qui truca):</label>
+                                  <input type="number" name="id_origen" required>
+                                  
+                                  <label>ID Usuari Destí (A qui truca):</label>
+                                  <input type="number" name="id_desti" required>
+                                  
+                                  <label>Durada (Minuts):</label>
+                                  <input type="number" name="durada" required>
+                                  
+                                  <label>Puntuació de Qualitat (1 a 5):</label>
+                                  <select name="puntuacio">
+                                      <option value="5">5 - Excel·lent</option>
+                                      <option value="4">4 - Bona</option>
+                                      <option value="3">3 - Normal</option>
+                                      <option value="2">2 - Dolenta</option>
+                                      <option value="1">1 - Pèssima</option>
+                                  </select>
+                                  
+                                  <button type="submit" class="btn" style="width:100%;">Desar Trucada a la BBDD</button>
+                              </form>
+                          </div>
+
                           <table>
                               <thead>
                                   <tr>
-                                      <th>Data</th>
-                                      <th>Equip</th>
-                                      <th>Baixada</th>
-                                      <th>Pujada</th>
-                                      <th>Resultat</th>
+                                      <th>ID Trucada</th>
+                                      <th>ID Origen</th>
+                                      <th>ID Destí</th>
+                                      <th>Data Inici</th>
+                                      <th>Durada</th>
+                                      <th>Puntuació</th>
                                   </tr>
                               </thead>
                               <tbody>
                                   <?php
                                   try {
-                                      $stmt = $pdo->query("SELECT data_hora, equip_mesurat, velocitat_baixada, velocitat_pujada, resultat FROM Mesura_Banda ORDER BY data_hora DESC");
+                                      $stmt = $pdo->query("SELECT id_trucada, id_origen, id_destinacio, data_hora_inici, durada_minuts, puntuacio FROM Registre_Trucades ORDER BY data_hora_inici DESC LIMIT 10");
                                       while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                                          $status_color = (strtolower($row['resultat']) == 'acceptable') ? '#2e7d32' : '#c62828';
                                           echo "<tr>";
-                                          echo "<td>" . htmlspecialchars($row['data_hora']) . "</td>";
-                                          echo "<td>" . htmlspecialchars($row['equip_mesurat']) . "</td>";
-                                          echo "<td>" . htmlspecialchars($row['velocitat_baixada']) . " Mbps</td>";
-                                          echo "<td>" . htmlspecialchars($row['velocitat_pujada']) . " Mbps</td>";
-                                          echo "<td style='color: $status_color; font-weight:bold;'>" . strtoupper(htmlspecialchars($row['resultat'])) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['id_trucada']) . "</td>";
+                                          echo "<td>Usuari #" . htmlspecialchars($row['id_origen']) . "</td>";
+                                          echo "<td>Usuari #" . htmlspecialchars($row['id_destinacio']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['data_hora_inici']) . "</td>";
+                                          echo "<td>" . htmlspecialchars($row['durada_minuts']) . " min</td>";
+                                          echo "<td>" . htmlspecialchars($row['puntuacio']) . " / 5</td>";
                                           echo "</tr>";
                                       }
                                   } catch (PDOException $e) {
-                                      echo "<tr><td colspan='5' style='color:red;'>Esperant dades d'amplada de banda...</td></tr>";
+                                      echo "<tr><td colspan='6' style='color:red;'>Esperant dades de trucades...</td></tr>";
                                   }
                                   ?>
                               </tbody>
@@ -314,6 +370,79 @@
               </div>
           </body>
           </html>
+      notify: Reiniciar NGINX
+
+    - name: Crear l'script PHP que valida identitat i rols
+      ansible.builtin.copy:
+        dest: /var/www/html/processar_trucada.php
+        owner: www-data
+        group: www-data
+        mode: '0644'
+        content: |
+          <?php
+          if ($_SERVER["REQUEST_METHOD"] == "POST") {
+              $host = '44.198.194.136';
+              $db   = 'innovatetech_gestio';
+              $user = 'innovate_admin';
+              $pass = 'AdminPassword2026!';
+              
+              try {
+                  $pdo = new PDO("mysql:host=$host;dbname=$db;charset=utf8", $user, $pass);
+                  $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+                  
+                  // 1. Recollir dades del formulari
+                  $email = trim($_POST['email_operari']);
+                  $dni_input = trim($_POST['dni_operari']);
+                  $origen = $_POST['id_origen'];
+                  $desti = $_POST['id_desti'];
+                  $durada = $_POST['durada'];
+                  $puntuacio = $_POST['puntuacio'];
+
+                  // 2. Validar que l'usuari existeix
+                  $stmt_check = $pdo->prepare("SELECT rol, dni_empleat FROM Usuaris WHERE email = ? LIMIT 1");
+                  $stmt_check->execute([$email]);
+                  $user_db = $stmt_check->fetch();
+
+                  if (!$user_db) {
+                      header("Location: consulta_bbdd.php?err=Autenticació fallida. L'email no existeix a la base de dades.");
+                      exit();
+                  }
+
+                  // 3. Autenticació real: Comprovar si el DNI introduït coincideix amb el de la BBDD
+                  if ($user_db['dni_empleat'] !== $dni_input) {
+                      header("Location: consulta_bbdd.php?err=Autenticació denegada. El DNI (PIN) introduït no és correcte per a aquest correu.");
+                      exit();
+                  }
+
+                  // 4. Validació de Rol
+                  if (strtolower(trim($user_db['rol'])) !== 'vendes') {
+                      header("Location: consulta_bbdd.php?err=Accés denegat. Només els usuaris amb el rol 'vendes' poden afegir registres.");
+                      exit();
+                  }
+
+                  // 5. Calcular seqüencialment el proper ID lliure
+                  $stmt_max_id = $pdo->query("SELECT MAX(id_trucada) AS max_id FROM Registre_Trucades");
+                  $row_max = $stmt_max_id->fetch(PDO::FETCH_ASSOC);
+                  $id_trucada = ($row_max['max_id'] !== null) ? $row_max['max_id'] + 1 : 1;
+                  
+                  $data_actual = date('Y-m-d H:i:s');
+
+                  // 6. Inserir la trucada a la Base de Dades
+                  $stmt_insert = $pdo->prepare("INSERT INTO Registre_Trucades (id_trucada, id_origen, id_destinacio, data_hora_inici, durada_minuts, puntuacio) VALUES (?, ?, ?, ?, ?, ?)");
+                  $stmt_insert->execute([$id_trucada, $origen, $desti, $data_actual, $durada, $puntuacio]);
+
+                  // 7. Retornar amb èxit
+                  header("Location: consulta_bbdd.php?msg=Identitat verificada. Trucada registrada correctament amb l'ID $id_trucada!");
+                  exit();
+
+              } catch (PDOException $e) {
+                  header("Location: consulta_bbdd.php?err=Error SQL: " . urlencode($e->getMessage()));
+                  exit();
+              }
+          } else {
+              header("Location: consulta_bbdd.php");
+          }
+          ?>
       notify: Reiniciar NGINX
 
   handlers:
