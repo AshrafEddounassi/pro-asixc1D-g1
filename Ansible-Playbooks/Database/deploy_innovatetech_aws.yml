@@ -34,7 +34,7 @@
         image_id: "{{ ami_id }}"
         region: "{{ aws_region }}"
         security_group: "{{ security_group }}"
-        wait: true                             
+        wait: true                               
         wait_timeout: 300
         volumes:
           - device_name: /dev/sda1
@@ -144,12 +144,12 @@
         state: import
         target: /tmp/schema.sql
         login_unix_socket: /var/run/mysqld/mysqld.sock
-    
+     
     - name: Pujar l'esquema de rols de seguretat
       copy:
         src: rols_db.sql
         dest: /tmp/rols_db.sql
-    
+     
     - name: Aplicar Rols de MariaDB
       community.mysql.mysql_db:
         name: "{{ db_name }}"
@@ -170,3 +170,73 @@
       service:
         name: mariadb
         state: restarted
+
+# FASE 4: Automatització de Còpies de Seguretat (Backups)
+- name: Configurar l'automatització de Còpies de Seguretat
+  hosts: db_servers
+  become: true
+  remote_user: innovateadmin
+  vars:
+    db_name: "innovatetech_gestio"
+    backup_dir: "/var/lib/mysql-files/backups" # Directori permès per secure_file_priv
+  tasks:
+    - name: Crear directori destinat als fitxers de backup
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: mysql
+        group: mysql
+        mode: '0750'
+
+    - name: Crear i desplegar l'script de backup automàtic
+      ansible.builtin.copy:
+        dest: /usr/local/bin/backup_dades.sh
+        owner: root
+        group: root
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          DB_NAME="{{ db_name }}"
+          BACKUP_DIR="{{ backup_dir }}"
+          DATE=$(date +"%Y%m%d_%H%M%S")
+          SOCKET="/var/run/mysqld/mysqld.sock"
+
+          # Taules requerides per a la còpia de seguretat
+          TABLES="empleats clients comandes registre_activitat_trucades"
+          STATUS="Èxit"
+
+          # 1. Calcular de forma dinàmica el següent id_backup (taula sense AUTO_INCREMENT)
+          NEXT_ID=$(mysql --socket="$SOCKET" "$DB_NAME" -se "SELECT COALESCE(MAX(id_backup), 0) + 1 FROM Control_Backups;")
+
+          # 2. Execució de les exportacions mitjançant SELECT INTO OUTFILE
+          for TABLE in $TABLES; do
+              FILE="${BACKUP_DIR}/${TABLE}_${DATE}.csv"
+              
+              mysql --socket="$SOCKET" "$DB_NAME" -e "
+                  SELECT * INTO OUTFILE '${FILE}'
+                  FIELDS TERMINATED BY ','
+                  ENCLOSED BY '\"'
+                  LINES TERMINATED BY '\n'
+                  FROM ${TABLE};
+              "
+              if [ $? -ne 0 ]; then
+                  STATUS="Error (Fallada a la taula: ${TABLE})"
+                  break
+              fi
+          done
+
+          # 3. Desar el registre a la taula de control existent Control_Backups
+          TAULES_FORMATADES=$(echo $TABLES | sed 's/ /, /g')
+          mysql --socket="$SOCKET" "$DB_NAME" -e "
+              INSERT INTO Control_Backups (id_backup, data_hora, taules_incloses, resultat, ruta_fitxer)
+              VALUES (${NEXT_ID}, NOW(), '${TAULES_FORMATADES}', '${STATUS}', '${BACKUP_DIR}/*_${DATE}.csv');
+          "
+
+    - name: Planificar l'execució diària de l'script a Cron (02:00 AM)
+      ansible.builtin.cron:
+        name: "Backup diari dades critiques InnovateTech"
+        minute: "0"
+        hour: "2"
+        job: "/usr/local/bin/backup_dades.sh >> /var/log/backup_dades_cron.log 2>&1"
+        user: root
+        state: present
