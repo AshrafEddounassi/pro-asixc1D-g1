@@ -203,3 +203,98 @@ ALTER TABLE Mesura_Banda
 
 ALTER TABLE Taula_Avisos 
     ADD CONSTRAINT FK_Avisos_Usuari FOREIGN KEY (id_usuari) REFERENCES Usuaris(id_usuari);
+
+
+-- ==========================================
+-- TRIGGERS (CONTROL DE QUOTES I AUDITORIA)
+-- ==========================================
+
+DELIMITER //
+
+-- =====================================================================
+-- 1. TRIGGER: Control de trucades diàries i minuts mensuals
+-- =====================================================================
+CREATE TRIGGER trg_control_quotes_trucades
+BEFORE INSERT ON Registre_Trucades
+FOR EACH ROW
+BEGIN
+    DECLARE v_limit_minuts INT;
+    DECLARE v_minuts_consumits INT;
+    DECLARE v_limit_trucades INT;
+    DECLARE v_trucades_avui INT;
+    DECLARE v_id_avis INT;
+    
+    -- Obtenim els límits de l'usuari que fa la trucada (origen)
+    SELECT limit_minuts_mes, limit_trucades_dia 
+    INTO v_limit_minuts, v_limit_trucades
+    FROM Usuaris 
+    WHERE id_usuari = NEW.id_origen;
+    
+    -- A. Control de trucades diàries
+    IF v_limit_trucades IS NOT NULL THEN
+        -- Comptem les trucades fetes avui per aquest usuari
+        SELECT COUNT(*) INTO v_trucades_avui
+        FROM Registre_Trucades
+        WHERE id_origen = NEW.id_origen 
+          AND DATE(data_hora_inici) = DATE(NEW.data_hora_inici);
+          
+        IF v_trucades_avui >= v_limit_trucades THEN
+            -- Generem el proper ID per a la Taula_Avisos (ja que no és AUTO_INCREMENT a l'esquema)
+            SELECT COALESCE(MAX(id_avis), 0) + 1 INTO v_id_avis FROM Taula_Avisos;
+            
+            -- Registrem l'avís d'auditoria
+            INSERT INTO Taula_Avisos (id_avis, id_usuari, taula_afectada, operacio_intentada, data_hora, detall_error)
+            VALUES (v_id_avis, NEW.id_origen, 'Registre_Trucades', 'INSERT', NOW(), 'S''ha superat el límit de trucades diàries.');
+            
+            -- Bloquegem la inserció
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: Límit de trucades diàries superat.';
+        END IF;
+    END IF;
+
+    -- B. Control de minuts mensuals
+    IF v_limit_minuts IS NOT NULL THEN
+        -- Sumem els minuts consumits aquest mes per l'usuari
+        SELECT COALESCE(SUM(durada_minuts), 0) INTO v_minuts_consumits
+        FROM Registre_Trucades
+        WHERE id_origen = NEW.id_origen 
+          AND MONTH(data_hora_inici) = MONTH(NEW.data_hora_inici)
+          AND YEAR(data_hora_inici) = YEAR(NEW.data_hora_inici);
+          
+        -- Comprovem si amb la trucada actual se supera el límit
+        IF (v_minuts_consumits + NEW.durada_minuts) > v_limit_minuts THEN
+            SELECT COALESCE(MAX(id_avis), 0) + 1 INTO v_id_avis FROM Taula_Avisos;
+            
+            INSERT INTO Taula_Avisos (id_avis, id_usuari, taula_afectada, operacio_intentada, data_hora, detall_error)
+            VALUES (v_id_avis, NEW.id_origen, 'Registre_Trucades', 'INSERT', NOW(), 'S''ha superat el límit de minuts mensuals.');
+            
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Error: Límit de minuts mensuals superat.';
+        END IF;
+    END IF;
+END//
+
+-- =====================================================================
+-- 2. TRIGGER: Auditoria d'accés no autoritzat a taules restringides
+-- =====================================================================
+-- Aquest trigger s'activa si un usuari de la base de dades associat a vendes o treballador
+-- intenta fer un UPDATE a la taula 'Nomines' (pots crear triggers idèntics per INSERT o DELETE).
+CREATE TRIGGER trg_auditoria_nomines_update
+BEFORE UPDATE ON Nomines
+FOR EACH ROW
+BEGIN
+    DECLARE v_id_avis INT;
+    
+    -- S'utilitza CURRENT_USER() per detectar quin usuari de BD està llançant la consulta.
+    -- Això comprova si el ROL pertany a 'vendes' o 'treballador'.
+    IF CURRENT_USER() LIKE 'vendes@%' OR CURRENT_USER() LIKE 'treballador@%' THEN
+        SELECT COALESCE(MAX(id_avis), 0) + 1 INTO v_id_avis FROM Taula_Avisos;
+        
+        -- Registrem l'intent al log d'auditoria
+        INSERT INTO Taula_Avisos (id_avis, id_usuari, taula_afectada, operacio_intentada, data_hora, detall_error)
+        VALUES (v_id_avis, NULL, 'Nomines', 'UPDATE', NOW(), CONCAT('Intent de modificació no autoritzat per: ', CURRENT_USER()));
+        
+        -- Bloquegem l'operació
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Accés denegat: El teu rol no permet modificar les nòmines.';
+    END IF;
+END//
+
+DELIMITER ;
