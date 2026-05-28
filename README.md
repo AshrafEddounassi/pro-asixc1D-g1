@@ -17,7 +17,7 @@ This document provides a comprehensive overview of the architecture, network con
 | **Web Server** | `InnovateTech-WebServer` | `t2.micro` | `52.21.139.73` | 20GB GP3 | 🟢 Active |
 | **Database Server** | `InnovateTech-DB-Server` | `t3.small` | `13.216.34.192` | 20GB GP3 | 🟢 Active |
 | **Logs Server** | `InnovateTech-Logs-Server` | `t3.large` | `23.21.142.115` | 20GB GP3 | 🟢 Active |
-| **LDAP Server** | `InnovateTech-LDAP` | `t3.small` | `54.174.227.251` | 20GB GP3 | 🟡 Provisioning |
+| **LDAP Server** | `InnovateTech-LDAP` | `t3.small` | `54.174.227.251` | 20GB GP3 | 🟢 Active |
 | **Audio Server** | `InnovateTech-AudioServer` | `t3.medium` | `44.212.203.72` | 30GB GP3 | 🟢 Active |
 | **Video & Streaming** | *PENDING* | `t3.large` | *PENDING* | 50GB GP3 | 🟡 Provisioning |
 
