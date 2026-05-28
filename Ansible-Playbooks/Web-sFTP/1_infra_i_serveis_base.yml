@@ -170,8 +170,8 @@
           <Global>
               <IfModule mod_ldap.c>
                   LDAPServer 54.174.227.251
-                  LDAPBindDN "cn=admin,dc=innovatetech,dc=cat" "@ITB2026"
-                  LDAPUsers "dc=innovatetech,dc=cat" (|(uid=%u)(sAMAccountName=%u))
+                  LDAPBindDN "cn=admin,dc=innovatetech,dc=cat" "pirineus"
+                  LDAPUsers "dc=innovatetech,dc=cat"
                   LDAPAuthBinds on
                   LDAPLog /var/log/proftpd/ldap.log
                   
