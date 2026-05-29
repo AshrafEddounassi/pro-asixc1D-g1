@@ -97,7 +97,7 @@ La salvaguarda de la informació es regeix estrictament per la metodologia profe
 #### 1.3.5 Redundància de Maquinari de Disc (Arquitectures RAID)
 Per neutralitzar l'impacte d'avaries mecàniques o elèctriques en unitats de disc físiques, es configuren estructures de disc redundants a nivell local i centralitzat:
 *   **RAID 1 (Mirall) per a Sistemes Operatius:** Les unitats de disc d'arrencada allotjades localment a cada xassís de servidor es configuren en mode RAID 1. Si un disc pateix una avaria elèctrica o mecànica, el segon manté l'operativitat del node sense caiguda del servei, permetent la substitució del component danyat en calent (*Hot-Swap*) pels operaris.
-*   **RAID 10 / RAID 6 per a Emmagatzematge Massiu de Dades:** La cabina centralitzada d'emmagatzematge de producció (SAN) i els servidors de logs es configuren combinant estructures avançades com RAID 10 (divisió de miralls) o RAID 6 (doble paritat distribuïda). D'aquesta manera s'obté un alt rendiment en operacions d'escriptura/lectura aleatòria de bases de dades i una alta tolerància a fallades simultànies de discs sense pèrdua d'informació.
+*   **RAID 10 per a Emmagatzematge Massiu de Dades:** La cabina centralitzada d'emmagatzematge de producció (SAN) i els servidors de logs es configuren combinant estructures avançades com RAID 10 (divisió de miralls) o RAID 6 (doble paritat distribuïda). D'aquesta manera s'obté un alt rendiment en operacions d'escriptura/lectura aleatòria de bases de dades i una alta tolerància a fallades simultànies de discs sense pèrdua d'informació.
 
 ---
 
