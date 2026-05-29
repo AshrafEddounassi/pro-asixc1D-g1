@@ -338,7 +338,7 @@ Consulta els documents tècnics complets a la carpeta `/Docs/`:
 
 | Document | Contingut |
 |---|---|
-| [`Docs/Prova.md`](Docs/Prova.md) | Documentació tècnica completa: CPD físic, infraestructura IT, elèctrica, càlculs SAI, tots els serveis |
+| [`Docs/Prova.md`](Docs/Documentació_Completa.md) | Documentació tècnica completa: CPD físic, infraestructura IT, elèctrica, càlculs SAI, tots els serveis |
 | [`Docs/Database.md`](Docs/Database.md) | Especificació de la base de dades: schema, rols, backups, triggers |
 
 ### 🎤 Recursos de la Presentació
